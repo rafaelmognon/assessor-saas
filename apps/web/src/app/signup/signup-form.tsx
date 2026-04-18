@@ -43,6 +43,19 @@ export function SignupForm() {
         />
       </div>
       <div>
+        <label className="block text-sm text-slate-700 mb-1">WhatsApp</label>
+        <input
+          name="whatsapp"
+          type="tel"
+          required
+          placeholder="+55 54 99999-9999"
+          className="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:border-indigo-500"
+        />
+        <p className="text-xs text-slate-500 mt-1">
+          É por esse número que você vai conversar com o Assessor.
+        </p>
+      </div>
+      <div>
         <label className="block text-sm text-slate-700 mb-1">Senha</label>
         <input
           name="senha"

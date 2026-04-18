@@ -42,14 +42,15 @@ export async function signupAction(formData: FormData): Promise<ActionResult> {
   const email = String(formData.get('email') ?? '').trim();
   const nome = String(formData.get('nome') ?? '').trim();
   const senha = String(formData.get('senha') ?? '');
+  const whatsapp = String(formData.get('whatsapp') ?? '').trim();
 
-  if (!email || !nome || !senha) return { ok: false, error: 'Preencha todos os campos' };
+  if (!email || !nome || !senha || !whatsapp) return { ok: false, error: 'Preencha todos os campos' };
 
   try {
     const data = await api<AuthResponse>('/auth/signup', {
       method: 'POST',
       auth: false,
-      body: JSON.stringify({ email, nome, senha }),
+      body: JSON.stringify({ email, nome, senha, whatsapp }),
     });
     setAuthCookies(data.accessToken, data.refreshToken);
     return { ok: true };

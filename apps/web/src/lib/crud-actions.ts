@@ -91,12 +91,12 @@ export async function deleteCompromissoAction(id: string) {
   );
 }
 
-// ─────── WhatsApp ───────
-export async function connectWhatsAppAction() {
-  return call(() => api('/me/whatsapp/connect', { method: 'POST' }), '/whatsapp');
+// ─────── WhatsApp (admin) ───────
+export async function adminConnectWhatsAppAction() {
+  return call(() => api('/admin/whatsapp/connect', { method: 'POST' }), '/admin/whatsapp');
 }
-export async function disconnectWhatsAppAction() {
-  return call(() => api('/me/whatsapp', { method: 'DELETE' }), '/whatsapp');
+export async function adminDisconnectWhatsAppAction() {
+  return call(() => api('/admin/whatsapp', { method: 'DELETE' }), '/admin/whatsapp');
 }
 
 // ─────── Notas ───────

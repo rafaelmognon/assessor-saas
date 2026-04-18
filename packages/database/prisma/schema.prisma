@@ -78,7 +78,7 @@ model User {
   deletedAt DateTime?
 
   // Relacionamentos
-  whatsappInstance   WhatsAppInstance?
+  whatsappInstances  WhatsAppInstance[]
   categorias         Categoria[]
   cartoes            Cartao[]
   transacoes         Transacao[]
@@ -124,7 +124,7 @@ enum WhatsAppStatus {
 
 model WhatsAppInstance {
   id          String         @id @default(cuid())
-  userId      String         @unique
+  userId      String         // Dono/admin da instância (em SaaS centralizado = admin do sistema)
   provider    String         @default("evolution")  // "evolution" | "meta_cloud" | "z_api"
   instanceId  String         @unique  // ID na Evolution API
   numero      String?        // E.164 quando conectado

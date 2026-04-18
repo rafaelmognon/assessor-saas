@@ -4,6 +4,7 @@ import { Queue } from 'bullmq';
 import { Public } from '../../common/decorators/public.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EvolutionAdapter } from './adapters/evolution.adapter';
+import { WhatsAppService } from './whatsapp.service';
 
 export const MENSAGENS_QUEUE = 'mensagens-recebidas';
 
@@ -19,7 +20,7 @@ export class WebhookController {
 
   /**
    * Webhook global da Evolution.
-   * Roteia por evento: mensagens vão pra fila, eventos de conexão atualizam o banco direto.
+   * Só aceita eventos da instância global do SaaS (ignora outros).
    */
   @Public()
   @HttpCode(200)
@@ -30,6 +31,11 @@ export class WebhookController {
       const instanceId = payload?.instance;
 
       this.logger.debug(`Webhook event=${event} instance=${instanceId}`);
+
+      // Ignora tudo que não é da instância global
+      if (instanceId !== WhatsAppService.GLOBAL_INSTANCE_ID) {
+        return { ok: true, ignored: 'instance_nao_global' };
+      }
 
       if (event === 'messages.upsert') {
         const msg = this.adapter.parseWebhook(payload);
@@ -44,22 +50,21 @@ export class WebhookController {
         return { ok: true, queued: !!msg };
       }
 
-      if (event === 'qrcode.updated' && instanceId) {
+      if (event === 'qrcode.updated') {
         const qr = payload?.data?.qrcode?.base64 ?? payload?.data?.base64;
         if (qr) {
           await this.prisma.whatsAppInstance.updateMany({
             where: { instanceId },
             data: { status: 'QR_CODE', qrCode: qr },
           });
-          this.logger.log(`QR atualizado para ${instanceId}`);
+          this.logger.log(`QR atualizado`);
         }
         return { ok: true };
       }
 
-      if (event === 'connection.update' && instanceId) {
+      if (event === 'connection.update') {
         const state = payload?.data?.state;
         if (state === 'open') {
-          // Conectado! Pega o número
           const wuid = payload?.data?.wuid ?? payload?.data?.instance?.wuid;
           let numero: string | undefined = wuid?.split('@')[0];
           if (numero && !numero.startsWith('+')) numero = `+${numero}`;
@@ -72,13 +77,13 @@ export class WebhookController {
               conectadoEm: new Date(),
             },
           });
-          this.logger.log(`✅ ${instanceId} conectado (${numero ?? '?'})`);
+          this.logger.log(`✅ instância conectada (${numero ?? '?'})`);
         } else if (state === 'close') {
           await this.prisma.whatsAppInstance.updateMany({
             where: { instanceId },
             data: { status: 'DISCONNECTED' },
           });
-          this.logger.log(`❌ ${instanceId} desconectado`);
+          this.logger.log(`❌ instância desconectada`);
         }
         return { ok: true };
       }

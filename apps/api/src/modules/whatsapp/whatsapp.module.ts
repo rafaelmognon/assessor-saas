@@ -4,7 +4,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { EvolutionAdapter } from './adapters/evolution.adapter';
 import { MensagensProcessor } from './mensagens.processor';
 import { WebhookController, MENSAGENS_QUEUE } from './webhook.controller';
-import { WhatsAppController } from './whatsapp.controller';
+import { AdminWhatsAppController, ClientWhatsAppController } from './whatsapp.controller';
 import { WhatsAppService } from './whatsapp.service';
 
 @Module({
@@ -24,7 +24,7 @@ import { WhatsAppService } from './whatsapp.service';
     }),
     BullModule.registerQueue({ name: MENSAGENS_QUEUE }),
   ],
-  controllers: [WhatsAppController, WebhookController],
+  controllers: [AdminWhatsAppController, ClientWhatsAppController, WebhookController],
   providers: [WhatsAppService, EvolutionAdapter, MensagensProcessor],
   exports: [WhatsAppService],
 })

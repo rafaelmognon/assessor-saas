@@ -1,95 +1,99 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { randomBytes } from 'crypto';
+import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EvolutionAdapter } from './adapters/evolution.adapter';
 
+/**
+ * WhatsAppService — modelo SaaS centralizado.
+ *
+ * Existe UMA única instância Evolution compartilhada por TODOS os clientes.
+ * O identificador é fixo (GLOBAL_INSTANCE_ID). Os clientes não conectam nada —
+ * eles só salvam o número do SaaS como contato e mandam mensagem.
+ *
+ * A identificação do tenant acontece no webhook, olhando o número remetente
+ * (campo User.whatsapp).
+ */
 @Injectable()
 export class WhatsAppService {
   private readonly logger = new Logger(WhatsAppService.name);
 
+  /** ID estável da instância global. Um e apenas um no sistema. */
+  static readonly GLOBAL_INSTANCE_ID = 'assessor-saas-global';
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly adapter: EvolutionAdapter,
+    private readonly config: ConfigService,
   ) {}
 
-  /**
-   * Cria nova instância WhatsApp para o usuário (ou recupera existente).
-   * Retorna QR code pra escanear.
-   */
-  async connect(userId: string) {
-    let instance = await this.prisma.whatsAppInstance.findUnique({ where: { userId } });
+  // ─────────────────────────────────────────────────────────────
+  // ADMIN (só o dono do SaaS usa)
+  // ─────────────────────────────────────────────────────────────
 
-    if (!instance) {
-      // Gera instanceId único e estável (usado tanto na Evolution quanto no nosso banco)
-      const instanceId = `u_${randomBytes(12).toString('hex')}`;
-      instance = await this.prisma.whatsAppInstance.create({
+  /** Cria (ou recupera) a instância global e devolve QR pra escanear. */
+  async adminConnect() {
+    const id = WhatsAppService.GLOBAL_INSTANCE_ID;
+
+    // Registro local (1 linha só, sem userId fixo)
+    let row = await this.prisma.whatsAppInstance.findFirst({
+      where: { instanceId: id },
+    });
+    if (!row) {
+      row = await this.prisma.whatsAppInstance.create({
         data: {
-          userId,
+          instanceId: id,
           provider: 'evolution',
-          instanceId,
           status: 'PENDING',
+          // WhatsAppInstance precisa de userId (schema atual exige).
+          // Pra instância global usamos o primeiro ADMIN. Se não houver, usa o user mais antigo.
+          userId: await this.firstAdminUserId(),
         },
       });
     }
 
-    // Se já está conectada, devolve status sem mexer
-    if (instance.status === 'CONNECTED') {
-      const status = await this.adapter.getStatus(instance.instanceId);
-      if (status.status === 'CONNECTED') {
-        return {
-          status: 'CONNECTED' as const,
-          numero: status.numero ?? instance.numero,
-        };
+    if (row.status === 'CONNECTED') {
+      const s = await this.adapter.getStatus(id);
+      if (s.status === 'CONNECTED') {
+        return { status: 'CONNECTED' as const, numero: s.numero ?? row.numero };
       }
-      // se a Evolution diz que caiu, atualizamos
     }
 
-    // Cria/recria a instância na Evolution
+    // Tenta criar na Evolution. Se já existir, só pega o QR atual.
     let result;
     try {
-      result = await this.adapter.createInstance(instance.instanceId);
-    } catch (e: any) {
-      // Se já existe, busca o QR
-      const status = await this.adapter.getStatus(instance.instanceId);
-      result = {
-        instanceId: instance.instanceId,
-        qrcode: status.qrcode,
-        status: status.status,
-      };
+      result = await this.adapter.createInstance(id);
+    } catch {
+      const s = await this.adapter.getStatus(id);
+      result = { instanceId: id, qrcode: s.qrcode, status: s.status };
     }
 
     await this.prisma.whatsAppInstance.update({
-      where: { userId },
+      where: { id: row.id },
       data: {
         status: result.status,
         qrCode: result.qrcode ?? null,
       },
     });
 
-    return {
-      status: result.status,
-      qrcode: result.qrcode,
-    };
+    return { status: result.status, qrcode: result.qrcode };
   }
 
-  async getStatus(userId: string) {
-    const instance = await this.prisma.whatsAppInstance.findUnique({ where: { userId } });
-    if (!instance) {
-      return { status: 'NAO_CONFIGURADO' as const };
-    }
+  async adminStatus() {
+    const id = WhatsAppService.GLOBAL_INSTANCE_ID;
+    const row = await this.prisma.whatsAppInstance.findFirst({ where: { instanceId: id } });
+    if (!row) return { status: 'NAO_CONFIGURADO' as const };
 
-    // O banco já está atualizado pelo webhook (qrcode.updated, connection.update).
-    // Fallback: se está PENDING há mais de 10s sem QR, faz polling à Evolution.
-    const idadeS = (Date.now() - instance.updatedAt.getTime()) / 1000;
-    if (instance.status === 'PENDING' && idadeS > 10 && !instance.qrCode) {
-      const remote = await this.adapter.getStatus(instance.instanceId);
+    // Fallback polling se está PENDING há mais de 10s sem QR
+    const idadeS = (Date.now() - row.updatedAt.getTime()) / 1000;
+    if (row.status === 'PENDING' && idadeS > 10 && !row.qrCode) {
+      const remote = await this.adapter.getStatus(id);
       if (remote.qrcode || remote.status !== 'PENDING') {
         const updated = await this.prisma.whatsAppInstance.update({
-          where: { userId },
+          where: { id: row.id },
           data: {
             status: remote.status,
             qrCode: remote.qrcode ?? null,
-            numero: remote.numero ?? instance.numero,
+            numero: remote.numero ?? row.numero,
             ultimoPingEm: new Date(),
           },
         });
@@ -103,55 +107,73 @@ export class WhatsAppService {
     }
 
     return {
-      status: instance.status,
-      numero: instance.numero ?? undefined,
-      qrcode: instance.qrCode ?? undefined,
-      conectadoEm: instance.conectadoEm,
+      status: row.status,
+      numero: row.numero ?? undefined,
+      qrcode: row.qrCode ?? undefined,
+      conectadoEm: row.conectadoEm,
     };
   }
 
-  async disconnect(userId: string) {
-    const instance = await this.prisma.whatsAppInstance.findUnique({ where: { userId } });
-    if (!instance) throw new NotFoundException('Sem instância WhatsApp');
-
-    await this.adapter.deleteInstance(instance.instanceId);
-    await this.prisma.whatsAppInstance.update({
-      where: { userId },
-      data: {
-        status: 'DISCONNECTED',
-        qrCode: null,
-        numero: null,
-      },
+  async adminDisconnect() {
+    const id = WhatsAppService.GLOBAL_INSTANCE_ID;
+    await this.adapter.deleteInstance(id);
+    await this.prisma.whatsAppInstance.updateMany({
+      where: { instanceId: id },
+      data: { status: 'DISCONNECTED', qrCode: null, numero: null },
     });
     return { ok: true };
   }
 
-  /**
-   * Envia mensagem para o WhatsApp do usuário.
-   * Usado pelo bot quando responde uma mensagem.
-   */
-  async sendToUser(userId: string, text: string) {
-    const instance = await this.prisma.whatsAppInstance.findUnique({ where: { userId } });
-    if (!instance || !instance.numero || instance.status !== 'CONNECTED') {
-      this.logger.warn(`User ${userId} sem WhatsApp conectado — msg não enviada`);
-      return;
-    }
-    await this.adapter.sendText(instance.instanceId, {
-      to: instance.numero,
-      text,
-    });
-  }
+  // ─────────────────────────────────────────────────────────────
+  // USO INTERNO (bot falando com cliente)
+  // ─────────────────────────────────────────────────────────────
 
   /**
-   * Encontra usuário pelo número que mandou mensagem (E.164).
-   * Usado pelo webhook pra rotear msg pro tenant certo.
+   * Envia mensagem pra um cliente específico (usado pelo worker ao responder).
    */
+  async sendToNumber(numero: string, text: string) {
+    const id = WhatsAppService.GLOBAL_INSTANCE_ID;
+    await this.adapter.sendText(id, { to: numero, text });
+  }
+
+  /** Busca user pelo número do WhatsApp. Compara só os dígitos (tolera formatação). */
   async findUserByNumero(numero: string) {
     const onlyDigits = numero.replace(/\D/g, '');
-    const instance = await this.prisma.whatsAppInstance.findFirst({
-      where: { numero: { contains: onlyDigits } },
-      include: { user: true },
+    if (!onlyDigits) return null;
+
+    // Busca por sufixo (em geral salvamos +55... mas o webhook pode vir sem +)
+    const users = await this.prisma.user.findMany({
+      where: {
+        whatsapp: { not: null },
+        deletedAt: null,
+      },
+      select: { id: true, email: true, nome: true, whatsapp: true },
     });
-    return instance?.user;
+    return users.find((u) => (u.whatsapp ?? '').replace(/\D/g, '') === onlyDigits);
+  }
+
+  /** Retorna o número público do SaaS (exibido na UI para o cliente salvar) */
+  getPublicNumber(): string | null {
+    const row = this.config.get<string>('WHATSAPP_PUBLIC_NUMBER');
+    return row ?? null;
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Helpers privados
+  // ─────────────────────────────────────────────────────────────
+
+  private async firstAdminUserId(): Promise<string> {
+    const admin = await this.prisma.user.findFirst({
+      where: { role: 'ADMIN' },
+      select: { id: true },
+    });
+    if (admin) return admin.id;
+    // fallback: o user mais antigo (provavelmente o dono em dev)
+    const any = await this.prisma.user.findFirst({
+      orderBy: { createdAt: 'asc' },
+      select: { id: true },
+    });
+    if (!any) throw new Error('Nenhum user no sistema');
+    return any.id;
   }
 }

@@ -36,11 +36,27 @@ export class AuthService {
     // Trial de 14 dias
     const trialEndsAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
 
+    // Normaliza WhatsApp pra E.164
+    let whatsapp = dto.whatsapp.replace(/\D/g, '');
+    if (!whatsapp.startsWith('55') && whatsapp.length <= 11) {
+      whatsapp = '55' + whatsapp; // assume BR se vier sem DDI
+    }
+    whatsapp = '+' + whatsapp;
+
+    // Confere se já existe um user com esse whatsapp
+    const whatsappExists = await this.prisma.user.findFirst({
+      where: { whatsapp, deletedAt: null },
+    });
+    if (whatsappExists) {
+      throw new ConflictException('Este WhatsApp já está cadastrado em outra conta');
+    }
+
     const user = await this.prisma.user.create({
       data: {
         email: dto.email.toLowerCase(),
         nome: dto.nome.trim(),
         passwordHash,
+        whatsapp,
         trialEndsAt,
       },
     });

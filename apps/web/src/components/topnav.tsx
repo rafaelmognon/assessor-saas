@@ -13,7 +13,7 @@ const links: NavLink[] = [
   { href: '/compromissos', label: 'Agenda' },
   { href: '/notas', label: 'Notas' },
   { href: '/categorias', label: 'Categorias' },
-  { href: '/whatsapp', label: 'WhatsApp' },
+  { href: '/whatsapp', label: 'Meu Assessor' },
 ];
 
 export function TopNav({ active }: { active: string }) {

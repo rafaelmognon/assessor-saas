@@ -34,16 +34,21 @@ export class MensagensProcessor extends WorkerHost {
       return;
     }
 
-    // Encontra o user pela instanceId (mais confiável que pelo numero)
-    const instance = await this.prisma.whatsAppInstance.findFirst({
-      where: { instanceId: msg.instanceId },
-      include: { user: true },
-    });
-    if (!instance) {
-      this.logger.warn(`Mensagem de instanceId ${msg.instanceId} não tem user — descartando`);
+    // Identifica o user pelo NÚMERO DO REMETENTE (modelo SaaS centralizado)
+    const user = await this.whats.findUserByNumero(msg.from);
+    if (!user) {
+      this.logger.log(`Número desconhecido: ${msg.from} — enviando mensagem de cadastro`);
+      const webUrl = process.env.WEB_URL ?? 'http://76.13.169.247';
+      await this.whats.sendToNumber(
+        msg.from,
+        `👋 Olá! Eu sou o *Assessor*, seu assistente pessoal de finanças e agenda.\n\n` +
+          `Pra começar a usar, crie sua conta no site:\n` +
+          `🔗 ${webUrl}/signup\n\n` +
+          `Coloque este número (${msg.from}) no cadastro e a gente se conecta automaticamente. ✨`,
+      );
       return;
     }
-    const userId = instance.userId;
+    const userId = user.id;
 
     // Setar tenant pra RLS
     await this.prisma.setTenant(userId);
@@ -59,7 +64,7 @@ export class MensagensProcessor extends WorkerHost {
         conteudo = transcricao;
       } catch (e: any) {
         this.logger.error(`Falha ao transcrever áudio: ${e.message}`);
-        await this.whats.sendToUser(userId, '🤔 Não consegui entender seu áudio. Pode escrever?');
+        await this.whats.sendToNumber(msg.from, '🤔 Não consegui entender seu áudio. Pode escrever?');
         return;
       }
     }
@@ -112,9 +117,9 @@ export class MensagensProcessor extends WorkerHost {
       resposta = '😅 Tive um problema ao processar. Tenta de novo daqui a pouco.';
     }
 
-    // Responde ao usuário
+    // Responde ao usuário (pelo número dele)
     if (resposta) {
-      await this.whats.sendToUser(userId, resposta);
+      await this.whats.sendToNumber(msg.from, resposta);
       await this.prisma.mensagem.create({
         data: {
           userId,

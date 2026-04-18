@@ -16,4 +16,10 @@ export class SignupDto {
     message: 'Senha deve conter letras e números',
   })
   senha!: string;
+
+  @IsString()
+  @Matches(/^\+?\d{10,15}$/, {
+    message: 'WhatsApp inválido. Use formato com DDD (ex: +5554999999999)',
+  })
+  whatsapp!: string;
 }
