@@ -7,7 +7,11 @@ import { TenantInterceptor } from './common/interceptors/tenant.interceptor';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
+import { CategoriasModule } from './modules/categorias/categorias.module';
+import { CartoesModule } from './modules/cartoes/cartoes.module';
 import { TransacoesModule } from './modules/transacoes/transacoes.module';
+import { CompromissosModule } from './modules/compromissos/compromissos.module';
+import { NotasModule } from './modules/notas/notas.module';
 
 @Module({
   imports: [
@@ -18,7 +22,11 @@ import { TransacoesModule } from './modules/transacoes/transacoes.module';
     PrismaModule,
     AuthModule,
     UsersModule,
+    CategoriasModule,
+    CartoesModule,
     TransacoesModule,
+    CompromissosModule,
+    NotasModule,
   ],
   controllers: [AppController],
   providers: [
