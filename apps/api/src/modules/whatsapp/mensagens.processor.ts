@@ -2,6 +2,7 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { CategoriaTipo, FormaPagamento, MensagemDirecao, MensagemTipo, OrigemTransacao, TransacaoTipo, NotaTag, CompromissoOrigem, NotaOrigem, MensagemIntent } from '@prisma/client';
+import { FieldCryptoService } from '../../common/crypto/field-crypto.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AiService, ExtractedIntent } from '../ai/ai.service';
 import { EvolutionAdapter } from './adapters/evolution.adapter';
@@ -18,6 +19,7 @@ export class MensagensProcessor extends WorkerHost {
     private readonly ai: AiService,
     private readonly adapter: EvolutionAdapter,
     private readonly whats: WhatsAppService,
+    private readonly crypto: FieldCryptoService,
   ) {
     super();
   }
@@ -58,14 +60,19 @@ export class MensagensProcessor extends WorkerHost {
     let transcricao: string | null = null;
 
     if (msg.type === 'AUDIO' && msg.mediaUrl) {
+      let audioBuffer: Buffer | null = null;
       try {
-        const buf = await this.adapter.downloadMedia(msg.mediaUrl);
-        transcricao = await this.ai.transcribe(buf, msg.mediaMimeType);
+        audioBuffer = await this.adapter.downloadMedia(msg.mediaUrl);
+        transcricao = await this.ai.transcribe(audioBuffer, msg.mediaMimeType);
         conteudo = transcricao;
       } catch (e: any) {
         this.logger.error(`Falha ao transcrever áudio: ${e.message}`);
         await this.whats.sendToNumber(msg.from, '🤔 Não consegui entender seu áudio. Pode escrever?');
         return;
+      } finally {
+        // 🔒 Descarta buffer do áudio imediatamente após processar
+        // (garbage collector libera da memória, nunca foi gravado em disco)
+        audioBuffer = null;
       }
     }
 
@@ -74,14 +81,15 @@ export class MensagensProcessor extends WorkerHost {
       return;
     }
 
+    // 🔐 Criptografa conteúdo e transcrição antes de persistir
     const mensagem = await this.prisma.mensagem.create({
       data: {
         userId,
         externalId: msg.externalId,
         direcao: MensagemDirecao.ENTRADA,
         tipo: msg.type === 'AUDIO' ? MensagemTipo.AUDIO : MensagemTipo.TEXTO,
-        conteudo,
-        transcricao,
+        conteudo: this.crypto.encrypt(conteudo),
+        transcricao: this.crypto.encryptOptional(transcricao),
         createdAt: msg.timestamp,
       },
     });
@@ -98,7 +106,8 @@ export class MensagensProcessor extends WorkerHost {
       agora: new Date(),
     });
 
-    this.logger.log(`Intent: ${intent.intent} | msg: "${conteudo.slice(0, 60)}"`);
+    // 🔒 Log sem expor conteúdo da mensagem
+    this.logger.log(`Intent: ${intent.intent} | userId: ${userId} | chars: ${conteudo.length}`);
 
     await this.prisma.mensagem.update({
       where: { id: mensagem.id },
@@ -125,7 +134,7 @@ export class MensagensProcessor extends WorkerHost {
           userId,
           direcao: MensagemDirecao.SAIDA,
           tipo: MensagemTipo.SISTEMA,
-          conteudo: resposta,
+          conteudo: this.crypto.encrypt(resposta),
         },
       });
     }

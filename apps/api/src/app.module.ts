@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { AppController } from './app.controller';
+import { CryptoModule } from './common/crypto/crypto.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { TenantInterceptor } from './common/interceptors/tenant.interceptor';
 import { PrismaModule } from './prisma/prisma.module';
@@ -14,6 +15,7 @@ import { CompromissosModule } from './modules/compromissos/compromissos.module';
 import { NotasModule } from './modules/notas/notas.module';
 import { WhatsAppModule } from './modules/whatsapp/whatsapp.module';
 import { AiModule } from './modules/ai/ai.module';
+import { MensagensModule } from './modules/mensagens/mensagens.module';
 
 @Module({
   imports: [
@@ -21,6 +23,7 @@ import { AiModule } from './modules/ai/ai.module';
       isGlobal: true,
       envFilePath: ['../../.env'],
     }),
+    CryptoModule,
     PrismaModule,
     AuthModule,
     UsersModule,
@@ -31,6 +34,7 @@ import { AiModule } from './modules/ai/ai.module';
     NotasModule,
     AiModule,
     WhatsAppModule,
+    MensagensModule,
   ],
   controllers: [AppController],
   providers: [

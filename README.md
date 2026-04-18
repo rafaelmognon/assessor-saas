@@ -80,6 +80,43 @@ npm run docker:logs      # ver logs dos containers
 
 Ver detalhes em `docs/roadmap.md` (em breve).
 
+## 🔐 Segurança — gestão da chave AES
+
+Conteúdo sensível (mensagens do WhatsApp) é **criptografado com AES-256-GCM** antes
+de ser persistido. A chave vive em `FIELD_ENCRYPTION_KEY` (`.env`).
+
+### ⚠️ Proteção da chave
+
+**Dev:** chave em `.env` local (permissão `600`, nunca commitar).
+
+**Produção:** chave deve viver FORA do servidor de aplicação. Opções:
+- [Doppler](https://www.doppler.com) (grátis até 5 usuários, super simples)
+- [HashiCorp Vault](https://www.vaultproject.io) (open-source, mais robusto)
+- AWS Secrets Manager / GCP Secret Manager
+
+Se alguém ganhar SSH no seu servidor, a chave não pode estar lá em `.env` — senão
+quebra todo o propósito.
+
+### Backup offline da chave (MVP)
+
+Enquanto não usa secrets manager, **anote a chave num lugar físico seguro** (papel
+num cofre, 1Password offline). Se o servidor pifar e você recriar sem a chave,
+perde TODO o histórico criptografado (irreversível).
+
+### Gerar nova chave
+
+```bash
+openssl rand -base64 32
+```
+
+Cole em `FIELD_ENCRYPTION_KEY=...` no `.env`.
+
+### Rotação de chave (futuro)
+
+O código usa prefixo `v1:` no ciphertext. Pra trocar chave, implementar `v2:` que
+tenta descriptografar com a nova primeiro, cai pra antiga. Script de migração
+re-criptografa tudo.
+
 ## Licença
 
 Proprietária — todos os direitos reservados.
