@@ -1,0 +1,455 @@
+// Prisma schema — Assessor SaaS
+// Sprint 1.2: schema completo multi-tenant
+//
+// Princípios:
+// 1. TODA tabela de domínio tem `userId` (multi-tenancy)
+// 2. Postgres RLS (Row-Level Security) é a 2ª camada de isolamento
+// 3. Soft delete com `deletedAt` em entidades sensíveis (LGPD)
+// 4. Audit log automático em mudanças críticas
+// 5. Campos sensíveis criptografados na aplicação (AES-256)
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ════════════════════════════════════════════════════════════
+// AUTH & TENANCY
+// ════════════════════════════════════════════════════════════
+
+enum UserRole {
+  USER       // cliente normal
+  ADMIN      // você (super admin do SaaS)
+}
+
+enum SubscriptionStatus {
+  TRIALING   // em trial gratuito
+  ACTIVE     // pagando
+  PAST_DUE   // pagamento atrasado
+  CANCELED   // cancelado pelo usuário
+  EXPIRED    // trial acabou sem pagar
+}
+
+enum Plan {
+  FREE       // trial 14 dias
+  PESSOAL    // R$ 29-49/mês
+  FAMILIA    // R$ 49-79/mês
+  PRO        // R$ 99-149/mês
+}
+
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  emailVerified DateTime?
+  passwordHash  String?  // null se for OAuth-only
+  nome          String
+  avatarUrl     String?
+  whatsapp      String?  // E.164: +5554999999999
+  fusoHorario   String   @default("America/Sao_Paulo")
+  moeda         String   @default("BRL")
+  role          UserRole @default(USER)
+
+  // Plano
+  plano                  Plan               @default(FREE)
+  subscriptionStatus     SubscriptionStatus @default(TRIALING)
+  trialEndsAt            DateTime?
+  stripeCustomerId       String?            @unique
+  stripeSubscriptionId   String?            @unique
+
+  // OAuth tokens (criptografados na app)
+  googleAccessToken      String?
+  googleRefreshToken     String?
+  googleTokenExpiresAt   DateTime?
+
+  // 2FA
+  totpSecret             String?  // criptografado
+  totpEnabled            Boolean  @default(false)
+
+  // Auditoria
+  ultimoLoginEm          DateTime?
+  ultimoLoginIp          String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  // Relacionamentos
+  whatsappInstance   WhatsAppInstance?
+  categorias         Categoria[]
+  cartoes            Cartao[]
+  transacoes         Transacao[]
+  compromissos       Compromisso[]
+  notas              Nota[]
+  mensagens          Mensagem[]
+  refreshTokens      RefreshToken[]
+  auditLogs          AuditLog[]
+
+  @@index([email])
+  @@index([whatsapp])
+  @@map("users")
+}
+
+model RefreshToken {
+  id         String   @id @default(cuid())
+  userId     String
+  tokenHash  String   @unique  // sha256 do token
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  userAgent  String?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@map("refresh_tokens")
+}
+
+// ════════════════════════════════════════════════════════════
+// WHATSAPP (Evolution API — adapter pluggable)
+// ════════════════════════════════════════════════════════════
+
+enum WhatsAppStatus {
+  PENDING        // criada mas não conectada
+  QR_CODE        // aguardando scan do QR
+  CONNECTED      // conectado e funcional
+  DISCONNECTED   // perdeu conexão
+  BANNED         // banido pelo WhatsApp
+}
+
+model WhatsAppInstance {
+  id          String         @id @default(cuid())
+  userId      String         @unique
+  provider    String         @default("evolution")  // "evolution" | "meta_cloud" | "z_api"
+  instanceId  String         @unique  // ID na Evolution API
+  numero      String?        // E.164 quando conectado
+  status      WhatsAppStatus @default(PENDING)
+  qrCode      String?        // dataURL temporário
+  conectadoEm DateTime?
+  ultimoPingEm DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("whatsapp_instances")
+}
+
+// ════════════════════════════════════════════════════════════
+// FINANCEIRO
+// ════════════════════════════════════════════════════════════
+
+enum CategoriaTipo {
+  SAIDA
+  ENTRADA
+}
+
+model Categoria {
+  id        String        @id @default(cuid())
+  userId    String
+  nome      String
+  icone     String        @default("🛒")
+  cor       String        @default("indigo")
+  tipo      CategoriaTipo @default(SAIDA)
+  metaMensal Decimal?     @db.Decimal(12, 2)
+  ordem     Int           @default(0)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transacoes Transacao[]
+
+  @@unique([userId, nome])
+  @@index([userId])
+  @@map("categorias")
+}
+
+enum CartaoTipo {
+  CREDITO
+  DEBITO
+  AMBOS
+}
+
+enum CartaoBandeira {
+  VISA
+  MASTERCARD
+  ELO
+  AMEX
+  HIPERCARD
+  OUTRA
+}
+
+model Cartao {
+  id        String          @id @default(cuid())
+  userId    String
+  apelido   String          // "Nubank", "Itaú Platinum"
+  tipo      CartaoTipo      @default(CREDITO)
+  bandeira  CartaoBandeira  @default(VISA)
+  ultimos4  String          // últimos 4 dígitos (NUNCA o número completo)
+  cor       String          @default("violet-purple")
+  limite    Decimal?        @db.Decimal(12, 2)
+  diaFecha  Int?            // dia do mês que fecha fatura
+  diaVence  Int?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transacoes Transacao[]
+
+  @@index([userId])
+  @@map("cartoes")
+}
+
+enum TransacaoTipo {
+  SAIDA
+  ENTRADA
+}
+
+enum FormaPagamento {
+  CREDITO
+  DEBITO
+  PIX
+  BOLETO
+  DINHEIRO
+  TRANSFERENCIA
+}
+
+enum OrigemTransacao {
+  WHATSAPP_TEXTO
+  WHATSAPP_AUDIO
+  MANUAL
+  RECORRENTE
+  IMPORTACAO   // futuro: extrato bancário
+}
+
+model Transacao {
+  id              String          @id @default(cuid())
+  userId          String
+  categoriaId     String?
+  cartaoId        String?
+
+  descricao       String
+  valor           Decimal         @db.Decimal(12, 2)
+  tipo            TransacaoTipo
+  formaPagamento  FormaPagamento  @default(PIX)
+  origem          OrigemTransacao @default(MANUAL)
+  data            DateTime        @default(now())
+
+  // Parcelamento (apenas crédito)
+  parcelaAtual    Int?            // 3 (de 12)
+  parcelasTotal   Int?            // 12
+  valorTotal      Decimal?        @db.Decimal(12, 2)  // 9000 (R$ 750 x 12)
+  parcelaPaiId    String?         // referência à transação "mãe" do parcelamento
+
+  // Recorrência
+  recorrenteId    String?         // referência à regra de recorrência
+
+  // Origem WhatsApp
+  mensagemId      String?         @unique  // mensagem que originou
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  categoria Categoria? @relation(fields: [categoriaId], references: [id], onDelete: SetNull)
+  cartao    Cartao?    @relation(fields: [cartaoId], references: [id], onDelete: SetNull)
+  mensagem  Mensagem?  @relation(fields: [mensagemId], references: [id], onDelete: SetNull)
+
+  @@index([userId, data(sort: Desc)])
+  @@index([userId, categoriaId])
+  @@index([userId, cartaoId])
+  @@map("transacoes")
+}
+
+// ════════════════════════════════════════════════════════════
+// AGENDA
+// ════════════════════════════════════════════════════════════
+
+enum CompromissoOrigem {
+  WHATSAPP_TEXTO
+  WHATSAPP_AUDIO
+  MANUAL
+  GOOGLE_CALENDAR  // sincronizado do GCal
+}
+
+model Compromisso {
+  id              String  @id @default(cuid())
+  userId          String
+
+  titulo          String
+  descricao       String?
+  local           String?
+  inicio          DateTime
+  fim             DateTime?
+  diaInteiro      Boolean @default(false)
+  cor             String  @default("indigo")
+
+  // Lembretes (em minutos antes do evento)
+  lembretesMinutos Int[] @default([30])
+
+  // Sincronização Google Calendar
+  googleEventId   String? @unique
+
+  // Origem
+  origem          CompromissoOrigem @default(MANUAL)
+  mensagemId      String?           @unique
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mensagem Mensagem? @relation(fields: [mensagemId], references: [id], onDelete: SetNull)
+
+  @@index([userId, inicio])
+  @@map("compromissos")
+}
+
+// ════════════════════════════════════════════════════════════
+// NOTAS & INSIGHTS
+// ════════════════════════════════════════════════════════════
+
+enum NotaTag {
+  IDEIA
+  INSIGHT
+  LEMBRETE
+  META
+  REFERENCIA
+  PERGUNTA
+}
+
+enum NotaOrigem {
+  WHATSAPP_TEXTO
+  WHATSAPP_AUDIO
+  MANUAL
+}
+
+model Nota {
+  id        String     @id @default(cuid())
+  userId    String
+
+  titulo    String?
+  conteudo  String     @db.Text
+  tag       NotaTag    @default(IDEIA)
+  cor       String?    // hex opcional
+  fixada    Boolean    @default(false)
+  origem    NotaOrigem @default(MANUAL)
+
+  mensagemId String?   @unique
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mensagem Mensagem? @relation(fields: [mensagemId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([userId, fixada])
+  @@map("notas")
+}
+
+// ════════════════════════════════════════════════════════════
+// MENSAGENS (histórico WhatsApp)
+// ════════════════════════════════════════════════════════════
+
+enum MensagemDirecao {
+  ENTRADA   // do usuário pra nós
+  SAIDA     // de nós pro usuário
+}
+
+enum MensagemTipo {
+  TEXTO
+  AUDIO
+  IMAGEM
+  DOCUMENTO
+  SISTEMA   // mensagem automática do bot
+}
+
+enum MensagemIntent {
+  REGISTRAR_GASTO
+  REGISTRAR_RECEITA
+  CRIAR_COMPROMISSO
+  CRIAR_NOTA
+  CONSULTAR_RESUMO
+  CONSULTAR_AGENDA
+  PERGUNTA_LIVRE
+  COMANDO_AJUDA
+  NAO_IDENTIFICADO
+}
+
+model Mensagem {
+  id              String         @id @default(cuid())
+  userId          String
+
+  direcao         MensagemDirecao
+  tipo            MensagemTipo
+  conteudo        String         @db.Text   // texto OU URL de áudio/imagem
+  transcricao     String?        @db.Text   // se for áudio
+  intent          MensagemIntent?
+  intentConfianca Float?         // 0.0 a 1.0
+  processadaEm    DateTime?
+  erro            String?        // se falhou processamento
+
+  // ID da mensagem na Evolution API (pra evitar duplicação)
+  externalId      String?        @unique
+
+  createdAt DateTime @default(now())
+
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transacao   Transacao?
+  compromisso Compromisso?
+  nota        Nota?
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("mensagens")
+}
+
+// ════════════════════════════════════════════════════════════
+// AUDIT LOG (LGPD)
+// ════════════════════════════════════════════════════════════
+
+enum AuditAction {
+  LOGIN
+  LOGOUT
+  PASSWORD_CHANGE
+  EMAIL_CHANGE
+  TWO_FACTOR_ENABLED
+  TWO_FACTOR_DISABLED
+  DATA_EXPORT       // LGPD Art. 18
+  ACCOUNT_DELETED   // LGPD Art. 18
+  WHATSAPP_CONNECTED
+  WHATSAPP_DISCONNECTED
+  SUBSCRIPTION_CREATED
+  SUBSCRIPTION_UPDATED
+  SUBSCRIPTION_CANCELED
+}
+
+model AuditLog {
+  id        String      @id @default(cuid())
+  userId    String?
+  action    AuditAction
+  metadata  Json?       // detalhes adicionais (IP, user agent, etc)
+  ipAddress String?
+  userAgent String?
+
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([action, createdAt(sort: Desc)])
+  @@map("audit_logs")
+}

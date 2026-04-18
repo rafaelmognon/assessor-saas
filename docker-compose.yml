@@ -1,0 +1,55 @@
+# Docker Compose para DESENVOLVIMENTO local
+# Produção: infra/docker-compose.prod.yml (criado na Sprint 1.7)
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: assessor_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-assessor}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev_change_me_in_prod}
+      POSTGRES_DB: ${POSTGRES_DB:-assessor_dev}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - ./.docker-data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-assessor}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: assessor_redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - ./.docker-data/redis:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Evolution API — habilitar na Sprint 1.6
+  # evolution:
+  #   image: atendai/evolution-api:latest
+  #   container_name: assessor_evolution
+  #   restart: unless-stopped
+  #   ports:
+  #     - "8080:8080"
+  #   environment:
+  #     AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY}
+  #     DATABASE_ENABLED: "true"
+  #     DATABASE_PROVIDER: postgresql
+  #     DATABASE_CONNECTION_URI: ${DATABASE_URL}
+  #     WEBHOOK_GLOBAL_URL: ${EVOLUTION_WEBHOOK_URL}
+  #   volumes:
+  #     - ./.docker-data/evolution:/evolution/instances
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
