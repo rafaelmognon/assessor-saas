@@ -6,6 +6,7 @@ import { ChevronLeft, ChevronRight, Calendar } from 'lucide-react';
 import { CategoriasDonut } from './_components/categorias-donut';
 import { CartoesList } from './_components/cartoes-list';
 import { PagamentosBar } from './_components/pagamentos-bar';
+import { SerieDiariaChart } from './_components/serie-diaria-chart';
 
 export const dynamic = 'force-dynamic';
 
@@ -42,11 +43,19 @@ interface Cartao {
   diaVence: number | null;
 }
 
+interface DiaPoint {
+  dia: string;
+  receitas: number;
+  despesas: number;
+  saldo: number;
+}
+
 export default async function VisaoGeralPage() {
-  const [resumo, proximos, cartoes] = await Promise.all([
+  const [resumo, proximos, cartoes, serieDiaria] = await Promise.all([
     api<ResumoResponse>('/me/transacoes/resumo'),
     api<Compromisso[]>('/me/compromissos/proximos?limit=4'),
     api<Cartao[]>('/me/cartoes'),
+    api<DiaPoint[]>('/me/transacoes/serie-diaria'),
   ]);
 
   const mesAtual = new Date().toLocaleDateString('pt-BR', { month: 'long' });
@@ -151,6 +160,9 @@ export default async function VisaoGeralPage() {
 
           {/* Coluna direita */}
           <div className="col-span-12 lg:col-span-8 space-y-4">
+            {/* Gráfico diário de movimentação */}
+            <SerieDiariaChart data={serieDiaria} />
+
             {/* Pagamentos */}
             <PagamentosBar porPagamento={resumo.porPagamento} totalDespesas={Number(resumo.despesas.total)} />
 

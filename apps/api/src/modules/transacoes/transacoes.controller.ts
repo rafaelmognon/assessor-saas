@@ -45,6 +45,62 @@ export class TransacoesController {
     });
   }
 
+  /**
+   * Série temporal: receitas, despesas e saldo acumulado por dia do mês.
+   * Para o gráfico de fluxo de caixa do dashboard.
+   */
+  @Get('serie-diaria')
+  async serieDiaria(@CurrentUser() user: RequestUser) {
+    const inicioMes = new Date();
+    inicioMes.setDate(1);
+    inicioMes.setHours(0, 0, 0, 0);
+
+    const fim = new Date(inicioMes);
+    fim.setMonth(fim.getMonth() + 1);
+
+    const transacoes = await this.prisma.transacao.findMany({
+      where: {
+        userId: user.userId,
+        deletedAt: null,
+        data: { gte: inicioMes, lt: fim },
+      },
+      select: { data: true, valor: true, tipo: true },
+    });
+
+    // Agrupa por dia
+    const diaMap = new Map<string, { receitas: number; despesas: number }>();
+    for (const t of transacoes) {
+      const key = t.data.toISOString().slice(0, 10);
+      const acc = diaMap.get(key) ?? { receitas: 0, despesas: 0 };
+      if (t.tipo === 'ENTRADA') acc.receitas += Number(t.valor);
+      else acc.despesas += Number(t.valor);
+      diaMap.set(key, acc);
+    }
+
+    // Preenche todos os dias do mês até hoje, com saldo acumulado
+    const hoje = new Date();
+    const diasNoMes = Math.min(
+      hoje.getDate(),
+      new Date(inicioMes.getFullYear(), inicioMes.getMonth() + 1, 0).getDate(),
+    );
+    const result: Array<{ dia: string; receitas: number; despesas: number; saldo: number }> = [];
+    let saldoAcc = 0;
+    for (let d = 1; d <= diasNoMes; d++) {
+      const dt = new Date(inicioMes);
+      dt.setDate(d);
+      const key = dt.toISOString().slice(0, 10);
+      const acc = diaMap.get(key) ?? { receitas: 0, despesas: 0 };
+      saldoAcc += acc.receitas - acc.despesas;
+      result.push({
+        dia: key,
+        receitas: acc.receitas,
+        despesas: acc.despesas,
+        saldo: saldoAcc,
+      });
+    }
+    return result;
+  }
+
   @Get('resumo')
   async resumo(@CurrentUser() user: RequestUser) {
     const inicioMes = new Date();
