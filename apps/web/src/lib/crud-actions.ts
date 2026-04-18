@@ -91,6 +91,14 @@ export async function deleteCompromissoAction(id: string) {
   );
 }
 
+// ─────── WhatsApp ───────
+export async function connectWhatsAppAction() {
+  return call(() => api('/me/whatsapp/connect', { method: 'POST' }), '/whatsapp');
+}
+export async function disconnectWhatsAppAction() {
+  return call(() => api('/me/whatsapp', { method: 'DELETE' }), '/whatsapp');
+}
+
 // ─────── Notas ───────
 export async function createNotaAction(input: any) {
   return call(() => api('/me/notas', { method: 'POST', body: JSON.stringify(input) }), '/notas');

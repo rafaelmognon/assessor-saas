@@ -35,21 +35,43 @@ services:
       timeout: 3s
       retries: 5
 
-  # Evolution API — habilitar na Sprint 1.6
-  # evolution:
-  #   image: atendai/evolution-api:latest
-  #   container_name: assessor_evolution
-  #   restart: unless-stopped
-  #   ports:
-  #     - "8080:8080"
-  #   environment:
-  #     AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY}
-  #     DATABASE_ENABLED: "true"
-  #     DATABASE_PROVIDER: postgresql
-  #     DATABASE_CONNECTION_URI: ${DATABASE_URL}
-  #     WEBHOOK_GLOBAL_URL: ${EVOLUTION_WEBHOOK_URL}
-  #   volumes:
-  #     - ./.docker-data/evolution:/evolution/instances
-  #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
+  evolution:
+    image: evoapicloud/evolution-api:v2.3.7
+    container_name: assessor_evolution
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      SERVER_TYPE: http
+      SERVER_PORT: 8080
+      SERVER_URL: http://evolution:8080
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY}
+      AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES: "true"
+      # Banco interno — evita conflito de schemas com nosso Postgres principal
+      DATABASE_ENABLED: "true"
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/evolution_db?schema=public
+      DATABASE_CONNECTION_CLIENT_NAME: evolution_exchange
+      # Cache (Redis)
+      CACHE_REDIS_ENABLED: "true"
+      CACHE_REDIS_URI: redis://redis:6379/2
+      CACHE_REDIS_PREFIX_KEY: evolution
+      CACHE_LOCAL_ENABLED: "false"
+      # Webhook global (escuta tudo e despacha pra nossa API)
+      WEBHOOK_GLOBAL_ENABLED: "true"
+      WEBHOOK_GLOBAL_URL: ${EVOLUTION_WEBHOOK_URL}
+      WEBHOOK_GLOBAL_WEBHOOK_BY_EVENTS: "false"
+      WEBHOOK_EVENTS_MESSAGES_UPSERT: "true"
+      WEBHOOK_EVENTS_CONNECTION_UPDATE: "true"
+      WEBHOOK_EVENTS_QRCODE_UPDATED: "true"
+      # Logs
+      LOG_LEVEL: ERROR,WARN,INFO
+      LOG_COLOR: "true"
+      DEL_INSTANCE: "false"
+    volumes:
+      - ./.docker-data/evolution:/evolution/instances
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy

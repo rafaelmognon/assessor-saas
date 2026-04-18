@@ -12,6 +12,8 @@ import { CartoesModule } from './modules/cartoes/cartoes.module';
 import { TransacoesModule } from './modules/transacoes/transacoes.module';
 import { CompromissosModule } from './modules/compromissos/compromissos.module';
 import { NotasModule } from './modules/notas/notas.module';
+import { WhatsAppModule } from './modules/whatsapp/whatsapp.module';
+import { AiModule } from './modules/ai/ai.module';
 
 @Module({
   imports: [
@@ -27,6 +29,8 @@ import { NotasModule } from './modules/notas/notas.module';
     TransacoesModule,
     CompromissosModule,
     NotasModule,
+    AiModule,
+    WhatsAppModule,
   ],
   controllers: [AppController],
   providers: [

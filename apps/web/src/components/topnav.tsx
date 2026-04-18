@@ -12,7 +12,8 @@ const links: NavLink[] = [
   { href: '/transacoes', label: 'Transações' },
   { href: '/compromissos', label: 'Agenda' },
   { href: '/notas', label: 'Notas' },
-  { href: '/categorias', label: 'Minhas Categorias' },
+  { href: '/categorias', label: 'Categorias' },
+  { href: '/whatsapp', label: 'WhatsApp' },
 ];
 
 export function TopNav({ active }: { active: string }) {
